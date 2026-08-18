@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AAPKD — Téléchargeur d'APK</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; color: #111; }
+    body { max-width:900px; margin:32px auto; padding:20px; background:#f7f9fc; border-radius:8px; box-shadow:0 6px 18px rgba(15,23,42,0.08); }
+    h1 { margin:0 0 8px; font-size:1.6rem; }
+    p.lead { margin:0 0 16px; color:#334155; }
+    textarea { width:100%; min-height:120px; padding:10px; border-radius:6px; border:1px solid #cbd5e1; resize:vertical; }
+    .controls { display:flex; gap:8px; margin-top:8px; flex-wrap:wrap; }
+    button { background:#0369a1; color:white; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; }
+    button.secondary { background:#e2e8f0; color:#0f172a; }
+    button.warning { background:#ef4444; }
+    ul { list-style:none; padding:0; margin:16px 0 0; }
+    li.item { background:white; border:1px solid #e2e8f0; margin-bottom:8px; padding:12px; border-radius:6px; display:grid; grid-template-columns: 1fr auto; gap:8px; align-items:center; }
+    .meta { font-size:0.9rem; color:#0f172a; word-break:break-all; }
+    .actions { display:flex; gap:8px; }
+    .progress { height:8px; background:#eef2ff; border-radius:99px; overflow:hidden; margin-top:8px; }
+    .progress > span { display:block; height:100%; width:0%; background:#06b6d4; transition:width 150ms linear; }
+    .note { font-size:0.85rem; color:#475569; margin-top:10px; }
+    .small { font-size:0.85rem; color:#64748b; }
+  </style>
+</head>
+<body>
+  <h1>AAPKD — Téléchargeur d'APK</h1>
+  <p class="lead">Collez ci-dessous les liens directs vers des fichiers .apk (un lien par ligne), puis cliquez sur "Analyser" pour préparer les téléchargements.</p>
+
+  <label for="urls"><strong>Liens APK (un par ligne)</strong></label>
+  <textarea id="urls" placeholder="https://example.com/app.apk&#10;https://another-host.com/downloads/app2.apk"></textarea>
+
+  <div class="controls">
+    <button id="analyzeBtn">Analyser</button>
+    <button id="downloadAllBtn" class="secondary">Télécharger tout (séquentiel)</button>
+    <button id="clearBtn" class="secondary">Effacer</button>
+    <div style="flex:1"></div>
+    <button id="openListBtn" class="secondary">Ouvrir tous (nouveaux onglets)</button>
+  </div>
+
+  <p class="note">Remarque : le téléchargement via fetch nécessite que le serveur autorise CORS. Si le téléchargement échoue, un nouvel onglet s'ouvrira pour que le navigateur gère le téléchargement.</p>
+
+  <ul id="list"></ul>
+
+  <p class="small">Développé avec AAPKD.</p>
+
+  <script>
+    // Récupère éléments
+    const urlsInput = document.getElementById('urls');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const downloadAllBtn = document.getElementById('downloadAllBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const openListBtn = document.getElementById('openListBtn');
+    const listEl = document.getElementById('list');
+
+    function parseUrls(text) {
+      return text.split('\\n').map(s => s.trim()).filter(Boolean);
+    }
+
+    function getFilenameFromUrl(urlStr) {
+      try {
+        const u = new URL(urlStr);
+        const name = decodeURIComponent(u.pathname.split('/').pop() || '');
+        if (name) return name;
+      } catch (e) { /* ignore */ }
+      // fallback: try from query or default
+      const qMatch = urlStr.match(/filename=([^&]+)/i);
+      if (qMatch) return decodeURIComponent(qMatch[1]);
+      return 'download.apk';
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function createList(urls) {
+      listEl.innerHTML = '';
+      urls.forEach((u, i) => {
+        const li = document.createElement('li');
+        li.className = 'item';
+        const meta = document.createElement('div');
+        meta.className = 'meta';
+        const name = getFilenameFromUrl(u);
+        meta.innerHTML = '<strong>' + escapeHtml(name) + '</strong><div style="color:#334155; margin-top:6px;">' + escapeHtml(u) + '</div>' +
+                         '<div class="progress" style="display:none;"><span></span></div>' +
+                         '<div class="small status" style="margin-top:6px;"></div>';
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+        const dlBtn = document.createElement('button');
+        dlBtn.textContent = 'Télécharger';
+        dlBtn.onclick = () => downloadOne(u, li);
+        const openBtn = document.createElement('button');
+        openBtn.className = 'secondary';
+        openBtn.textContent = 'Ouvrir';
+        openBtn.onclick = () => window.open(u, '_blank');
+        actions.appendChild(dlBtn);
+        actions.appendChild(openBtn);
+        li.appendChild(meta);
+        li.appendChild(actions);
+        listEl.appendChild(li);
+      });
+    }
+
+    analyzeBtn.addEventListener('click', () => {
+      const urls = parseUrls(urlsInput.value);
+      if (urls.length === 0) {
+        alert('Aucun lien détecté. Collez au moins un lien APK (une URL par ligne).');
+        return;
+      }
+      createList(urls);
+    });
+
+    clearBtn.addEventListener('click', () => {
+      urlsInput.value = '';
+      listEl.innerHTML = '';
+    });
+
+    openListBtn.addEventListener('click', () => {
+      const urls = parseUrls(urlsInput.value);
+      if (!urls.length) return alert('Aucun lien détecté.');
+      urls.forEach(u => window.open(u, '_blank'));
+    });
+
+    downloadAllBtn.addEventListener('click', async () => {
+      const urls = parseUrls(urlsInput.value);
+      if (!urls.length) return alert('Aucun lien détecté.');
+      // assure la liste visible et correspondante
+      createList(urls);
+      const items = Array.from(listEl.querySelectorAll('li.item'));
+      for (let i = 0; i < urls.length; i++) {
+        const li = items[i];
+        try {
+          // eslint-disable-next-line no-await-in-loop
+          await downloadOne(urls[i], li);
+        } catch (err) {
+          console.error('Erreur téléchargement:', err);
+          // continue aux suivants
+        }
+        // léger délai entre téléchargements pour éviter surcharge
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise(r => setTimeout(r, 350));
+      }
+    });
+
+    async function downloadOne(url, containerLi) {
+      const meta = containerLi.querySelector('.meta');
+      const progressWrap = meta.querySelector('.progress');
+      const progressBar = progressWrap ? progressWrap.querySelector('span') : null;
+      const statusEl = meta.querySelector('.status');
+      const filename = getFilenameFromUrl(url);
+
+      statusEl.textContent = 'Démarrage...';
+      if (progressWrap) progressWrap.style.display = 'none';
+      if (progressBar) progressBar.style.width = '0%';
+
+      // Essayer fetch + stream (nécessite CORS côté serveur)
+      try {
+        const response = await fetch(url, { mode: 'cors' });
+        if (!response.ok) {
+          statusEl.textContent = 'Erreur HTTP: ' + response.status + ' ' + response.statusText;
+          // fallback: ouvrir dans un nouvel onglet
+          fallbackOpen(url, statusEl);
+          return;
+        }
+
+        // Si le serveur ne fournit pas Content-Length, on lira quand même mais sans pourcentage exact
+        const contentLength = response.headers.get('Content-Length');
+        const total = contentLength ? parseInt(contentLength, 10) : null;
+
+        if (!response.body) {
+          // Pas de streaming supporté — on tombe en lecture entière
+          const blob = await response.blob();
+          saveBlob(blob, filename);
+          statusEl.textContent = 'Téléchargement terminé';
+          return;
+        }
+
+        // Lecture par stream pour afficher la progression
+        const reader = response.body.getReader();
+        const chunks = [];
+        let received = 0;
+        if (progressWrap) progressWrap.style.display = 'block';
+        statusEl.textContent = 'Téléchargement en cours...';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length || value.byteLength || (value.length === undefined ? 0 : value.length);
+          if (total && progressBar) {
+            const percent = Math.min(100, Math.round((received / total) * 100));
+            progressBar.style.width = percent + '%';
+            statusEl.textContent = 'Téléchargement: ' + percent + '%';
+          } else if (progressBar) {
+            // indeterminate progress animation simulation: increase bar gradually
+            const current = parseFloat(progressBar.style.width) || 0;
+            const next = Math.min(95, current + Math.random() * 12);
+            progressBar.style.width = next + '%';
+            statusEl.textContent = 'Téléchargement: ' + Math.round(next) + '% (approx.)';
+          }
+        }
+
+        // Concaténation des chunks en Blob
+        const blob = new Blob(chunks, { type: 'application/vnd.android.package-archive' });
+        saveBlob(blob, filename);
+        if (progressBar) progressBar.style.width = '100%';
+        statusEl.textContent = 'Téléchargement terminé';
+      } catch (err) {
+        console.error('Fetch échoué pour', url, err);
+        statusEl.textContent = 'Téléchargement impossible via fetch, fallback...';
+        // Fallback: ouvrir le lien dans un nouvel onglet (le navigateur gère le téléchargement)
+        fallbackOpen(url, statusEl);
+      }
+    }
+
+    function saveBlob(blob, filename) {
+      try {
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = filename || 'download.apk';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        // relâcher l'URL après un court délai
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+      } catch (e) {
+        console.error('saveBlob erreur', e);
+        alert('Impossible de sauvegarder le fichier automatiquement. Un nouvel onglet va s\'ouvrir.');
+      }
+    }
+
+    function fallbackOpen(url, statusEl) {
+      try {
+        window.open(url, '_blank');
+        if (statusEl) statusEl.textContent = 'Ouvert dans un nouvel onglet (fallback)';
+      } catch (e) {
+        if (statusEl) statusEl.textContent = 'Fallback échoué — copiez le lien manuellement.';
+      }
+    }
+
+    // Optionnel: empêcher soumission accidentelle par Enter dans le textarea
+    urlsInput.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        analyzeBtn.click();
+      }
+    });
+
+    // Petit exemple prérempli pour tester (commenter/supprimer en production)
+    // urlsInput.value = 'https://example.com/path/to/app.apk';
+  </script>
+</body>
+</html>
